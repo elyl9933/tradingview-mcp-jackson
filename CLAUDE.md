@@ -1,6 +1,49 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # TradingView MCP — Claude Instructions
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+
+## Development Commands
+
+```bash
+npm install
+npm test              # runs test:e2e + pine_analyze (29 offline tests, no TradingView needed)
+npm run test:e2e      # tests/e2e.test.js only
+npm run test:unit     # pine_analyze + cli tests
+npm run test:cli      # tests/cli.test.js only
+npm run test:all      # all three suites
+npm run test:verbose  # spec reporter, e2e + pine_analyze
+node --test tests/e2e.test.js --test-name-pattern="<name>"  # run a single test by name
+
+tv status             # verify CDP connection (TradingView Desktop must be running)
+tv launch             # auto-detect and launch TradingView with CDP enabled
+node src/server.js    # run the MCP server directly (stdio transport)
+```
+
+Most tests are offline and don't require a live TradingView instance; e2e tests that touch the chart need TradingView Desktop running with `--remote-debugging-port=9222` (use `tv launch`).
+
+## Architecture
+
+```
+Claude Code ←→ MCP Server (stdio) ←→ CDP (localhost:9222) ←→ TradingView Desktop (Electron)
+```
+
+The codebase is a **three-layer stack**, mirrored 1:1 across `src/core/`, `src/tools/`, and `src/cli/commands/` — each domain (chart, data, pine, drawing, replay, alerts, batch, watchlist, indicators, ui, pane, tab, capture, health, morning) has one file per layer:
+
+1. **`src/core/*.js`** — the actual logic: CDP `Runtime.evaluate` calls against `window.TradingViewApi` and friends. This is where browser-side JS strings live and get executed in the TradingView page context. `src/core/index.js` re-exports everything as the public `tradingview-mcp/core` API.
+2. **`src/tools/*.js`** — thin MCP tool wrappers (`registerXTools(server)`) that define Zod schemas and call into `core/`, formatting results with `jsonResult` from `_format.js`. Registered in `src/server.js`.
+3. **`src/cli/commands/*.js`** — CLI command wrappers around the same `core/` functions, registered via `src/cli/router.js` (a zero-dependency arg parser built on `node:util.parseArgs`). Entry point: `src/cli/index.js`, exposed as the `tv` bin.
+
+**`src/connection.js`** is the CDP bridge shared by all of `core/`: it finds the TradingView chart target via `http://localhost:9222/json/list`, connects with `chrome-remote-interface`, and exposes `getClient()`/`evaluate()`/`getTargetInfo()`. `KNOWN_PATHS` documents the live-probed JS paths into TradingView's internals (e.g. `window.TradingViewApi._activeChartWidgetWV.value()` for the chart API, `_replayApi`, `_alertService`, the Pine Facade REST API, etc.) — discovered via probing since these are undocumented Electron internals.
+
+When adding a new capability: implement the CDP logic in `core/`, then add thin wrappers in both `tools/` (MCP) and `cli/commands/` (CLI) so the same capability is reachable both ways.
+
+## Scope Constraints (from CONTRIBUTING.md)
+
+This is a **local bridge only** — all data access must go through the locally-running TradingView Desktop app via CDP. Out of scope: connecting directly to TradingView's servers, bypassing auth/subscription, scraping/caching/redistributing market data, automated trading/order execution, or bundling TradingView's proprietary code.
 
 ## Decision Tree — Which Tool When
 
