@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # TradingView MCP — Claude Instructions
 
-68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+81 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222). This is a fork of [tradesdontlie/tradingview-mcp](https://github.com/tradesdontlie/tradingview-mcp) that adds the morning-brief workflow, `rules.json`-driven bias generation, and a launch-bug fix for TradingView Desktop v2.14+.
 
 ## Development Commands
 
@@ -31,7 +31,7 @@ Most tests are offline and don't require a live TradingView instance; e2e tests 
 Claude Code ←→ MCP Server (stdio) ←→ CDP (localhost:9222) ←→ TradingView Desktop (Electron)
 ```
 
-The codebase is a **three-layer stack**, mirrored 1:1 across `src/core/`, `src/tools/`, and `src/cli/commands/` — each domain (chart, data, pine, drawing, replay, alerts, batch, watchlist, indicators, ui, pane, tab, capture, health, morning) has one file per layer:
+The codebase is a **three-layer stack**, mirrored 1:1 across `src/core/`, `src/tools/`, and `src/cli/commands/` — each domain (chart, data, pine, drawing, replay, alerts, batch, watchlist, indicators, ui, pane, tab, stream, layout, capture, health, morning) has one file per layer:
 
 1. **`src/core/*.js`** — the actual logic: CDP `Runtime.evaluate` calls against `window.TradingViewApi` and friends. This is where browser-side JS strings live and get executed in the TradingView page context. `src/core/index.js` re-exports everything as the public `tradingview-mcp/core` API.
 2. **`src/tools/*.js`** — thin MCP tool wrappers (`registerXTools(server)`) that define Zod schemas and call into `core/`, formatting results with `jsonResult` from `_format.js`. Registered in `src/server.js`.
@@ -127,6 +127,14 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `tv_launch` → auto-detect and launch TradingView with CDP on Mac/Win/Linux
 - `tv_health_check` → verify connection is working
 
+### "Run my morning brief" / "What was my bias yesterday?"
+1. `morning_brief` (or `tv brief`) → reads `rules.json` (copy from `rules.example.json` if missing — checks project root then `~/.tradingview-mcp/rules.json`), scans every symbol in the `watchlist`, and returns structured per-symbol data (price, indicator values, levels) for Claude to apply the user's `bias_criteria` and `risk_rules` against
+2. Claude synthesizes the structured data into a bias line per symbol + an overall session read (this synthesis step happens in Claude, not in the tool)
+3. `session_save` → persists the generated brief to `~/.tradingview-mcp/sessions/YYYY-MM-DD.json`
+4. `session_get` → retrieves today's (or, if absent, yesterday's) saved brief for comparison
+
+`rules.json` is gitignored (personal trading config); `rules.example.json` is the template that ships in the repo.
+
 ## Context Management Rules
 
 These tools can return large payloads. Follow these rules to avoid context bloat:
@@ -152,6 +160,20 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 | `data_get_ohlcv` (summary) | ~500 bytes |
 | `data_get_ohlcv` (100 bars) | ~8 KB |
 | `capture_screenshot` | ~300 bytes (returns file path, not image data) |
+
+## Git Workflow — Don't Lose Work
+
+This repo has a remote at `origin` (https://github.com/LewisWJackson/tradingview-mcp-jackson.git). Whenever you complete a meaningful chunk of work (a feature, fix, refactor, or doc update), commit it with a clean, descriptive message and push to `origin` so progress is never lost to a crashed session or context reset:
+
+```bash
+git add <specific files>      # avoid `git add -A`/`git add .` — review what's staged
+git commit -m "Short imperative summary of the why, not just the what"
+git push origin <branch>
+```
+
+- Commit at logical checkpoints rather than batching unrelated changes into one commit.
+- Write messages that explain *why* a change was made, in the imperative mood (e.g. "Fix race condition in CDP reconnect", not "fixed bug").
+- Push after committing so the remote reflects current status — don't let work sit unpushed locally.
 
 ## Tool Conventions
 
